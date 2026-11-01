@@ -9,13 +9,18 @@ It never writes to your save. It is for looking, not cheating.
 
 ## What it shows
 
+- **Your line-up**: each starter's rating in the slot your tactic gives him, with
+  out-of-position, injured, loaned and sold players flagged. Then a plan, move by
+  move: bring in a bench or reserve player who suits a slot better, or swap two
+  starters. Each player is used once, and the team's total rating is shown before and
+  after.
 - **Your squad** by position: a 0–100 rating, each skill (0–7), the market value
   the game shows, status (form, injury, cards, trialist/reserve), and a verdict.
-  The verdict is *keep*, *depth*, or *upgrade*. Under a player worth replacing come a
-  few options: the best rated, the cheapest, and the most rating per pound. These are
-  players at least 10 points better that your balance plus his sale price would buy.
-  Each option shows the change in every skill, the rating gain, and the net cost.
-- **Best buys** per position, rated above your current best and within budget.
+  The verdict is *keep*, *depth*, *sold* or *upgrade*. Under a player worth replacing
+  is the best upgrade in each spending band: a swap that costs nothing net of his sale,
+  then up to 10%, 25%, 50% and all of your budget (`--bands`). Each shows the rating
+  gain, the change in every skill, the net cost, and the club's country and continent.
+- **Best buys** per position, rated above your current best, in the same spending bands.
 - **Any club's squad**, with each skill averaged over its outfield players.
 - **A search** over every club player in the world, by position, minimum skills, price
   and name, sorted by rating, value or any one skill.
@@ -38,9 +43,10 @@ A    70  Antony                 Portland Timbers     4   3   2   2   7   6   3  
 ## Usage
 
 ```
-swos-scout                       squad, then best buys
-swos-scout squad [--pos POS] [--budget M] [--options N]
-swos-scout buy   [--pos POS] [--budget M] [--top N]
+swos-scout                       line-up, squad, then best buys
+swos-scout lineup [--min-gain N] [--changes N]
+swos-scout squad [--pos POS] [--budget M] [--bands P,P,..] [--options N]
+swos-scout buy   [--pos POS] [--budget M] [--bands P,P,..] [--top N]
 swos-scout team NAME
 swos-scout find  [--pos POS] [--min SKILL=N ...] [--max-price M] [--name TEXT]
                  [--sort rating|value|SKILL] [--top N]
@@ -65,6 +71,11 @@ report names the file. Save your career in the game before running it again.
 - **Skills** are the 0–7 values the match engine uses. The save stores 0–15, but
   8–15 is the same skill as 0–7: the engine ignores the extra bit, which only raises
   the player's price.
+- **Line-up roles** come from your tactic: each slot's average place on the pitch in
+  OpenSWOS's tactic data. For your own tactics (A–F), the starters' own positions are
+  used.
+- A player you have sold stays in the squad record, named `*ERR* ...`, until the
+  transfer completes. He is shown as SOLD and never picked.
 - National sides and custom teams are never offered as buys. `team` still shows them.
 - **Value** is the price the game displays, worked out from OpenSWOS's own value
   tables and form adjustment. It is not the asking price; clubs usually want more.

@@ -96,6 +96,44 @@ PF_INFORM, PF_LOAN = 0x01, 0x02
 # Country numbers of the national sides (the continent files: Europe 80 to
 # Oceania 85) and of the custom teams (72). Nobody can be bought from them.
 NOT_BUYABLE = {72, 80, 81, 82, 83, 84, 85}
+# The game keeps a player you have sold in the squad record until the
+# transfer goes through, with his name overwritten by this prefix.
+SOLD_PREFIX = "*ERR*"
+
+# Continent of each club country, by the game's country number. The names
+# come from the team database at run time; this is only the grouping.
+CONTINENTS = {
+    "Europe": set(range(0, 42)) | {76, 78},
+    "Africa": {42, 69, 79},
+    "S. America": {43, 45, 46, 48, 49, 50, 64, 65, 66, 71, 77},
+    "N. America": {51, 60, 73},
+    "Asia": {55, 67, 75},
+    "Oceania": {44, 62},
+}
+# Filled in by world_players: country number -> name, club name -> country.
+COUNTRY_NAMES = {}
+CLUB_COUNTRY = {}
+
+# The role each line-up slot plays in the built-in tactics, in the game's
+# tactic numbering (team "tactics" 0-11; 12-17 are your own tactics A-F, for
+# which the starters' own positions are used). Worked out from each slot's
+# average place on the pitch in OpenSWOS's tactic data (depth: defence,
+# midfield, attack; width: right, centre, left). Slot 1 is the goalkeeper;
+# the game lists the rest from right to left.
+TACTICS = [
+    ("4-4-2", ["GK", "RB", "D", "D", "LB", "RW", "M", "M", "LW", "A", "A"]),
+    ("5-4-1", ["GK", "RB", "D", "D", "LB", "RW", "D", "M", "LW", "M", "A"]),
+    ("4-5-1", ["GK", "RB", "D", "D", "LB", "RW", "M", "M", "LW", "M", "A"]),
+    ("5-3-2", ["GK", "RB", "D", "M", "LB", "RW", "M", "M", "LW", "A", "A"]),
+    ("3-5-2", ["GK", "RB", "D", "M", "LB", "RW", "M", "M", "LW", "A", "A"]),
+    ("4-3-3", ["GK", "RB", "D", "D", "LB", "RW", "M", "A", "LW", "A", "A"]),
+    ("4-2-4", ["GK", "RB", "D", "D", "LB", "RW", "M", "M", "LW", "M", "A"]),
+    ("3-4-3", ["GK", "RB", "D", "M", "LB", "RW", "M", "A", "LW", "A", "A"]),
+    ("Sweep", ["GK", "RB", "D", "D", "LB", "RW", "M", "M", "LW", "A", "A"]),
+    ("5-2-3", ["GK", "RB", "D", "D", "LB", "RW", "D", "M", "LW", "M", "A"]),
+    ("Attack", ["GK", "RB", "D", "M", "LB", "RW", "M", "M", "LW", "A", "A"]),
+    ("Defend", ["GK", "RB", "D", "D", "LB", "RB", "M", "M", "LB", "M", "A"]),
+]
 
 
 def skill(p, name):
@@ -103,12 +141,39 @@ def skill(p, name):
     return p[name] & 7
 
 
-def rating(p):
-    """0-100 position-weighted rating (GK: price index scaled)."""
-    if p["position"] == 0:
-        return round(min(p["price"], 49) / 49 * 100)
-    w = WEIGHTS[p["position"]]
+def rating(p, pos=None):
+    """0-100 rating at `pos` (default: his own position). Goalkeepers are rated
+    by price index and only in goal; outfield players are worth 0 in goal."""
+    pos = p["position"] if pos is None else pos
+    if pos == 0 or p["position"] == 0:
+        return round(min(p["price"], 49) / 49 * 100) if pos == p["position"] else 0
+    w = WEIGHTS[pos]
     return round(sum(w[s] * skill(p, s) for s in SKILLS) / (7 * sum(w.values())) * 100)
+
+
+def sold(p):
+    """True for a player you have sold who is still in the squad record."""
+    return p["player_name"].startswith(SOLD_PREFIX)
+
+
+def display_name(p):
+    """Player name for display, without the sold marker."""
+    return p["player_name"].removeprefix(SOLD_PREFIX).strip().title()
+
+
+def continent(num):
+    """Continent of a country number, or '' when unknown."""
+    return next((c for c, nums in CONTINENTS.items() if num in nums), "")
+
+
+def where(club):
+    """'Country, Continent' of a club, as far as the data says."""
+    num = CLUB_COUNTRY.get(club)
+    if num is None:
+        return "?"
+    name = COUNTRY_NAMES.get(num, f"country {num}")
+    cont = continent(num)
+    return f"{name}, {cont}" if cont else name
 
 
 def value_k(p):
@@ -134,6 +199,8 @@ def money(k):
 def status(p):
     """Short status column: injury, cards, loan, trialist/reserve, form."""
     out = []
+    if sold(p):
+        return "SOLD"
     if p["form"] == FORM_TRIALIST:
         out.append("TRIAL")
     elif p["form"] == FORM_RESERVE:
@@ -169,22 +236,27 @@ def world_players(save, db_dir, own_gtn):
         if gtn == own_gtn or gtn in seen_teams or name in seen_teams:
             return
         seen_teams.update((gtn, name))
+        CLUB_COUNTRY.setdefault(name, team.get("country_number"))
         if team.get("country_number") in NOT_BUYABLE:
             source = "nat"
         for p in plist:
             if p.get("player_name"):
                 players.append((team["team_name"], source, p))
 
-    for t in (save.get("selected_teams") or []) + (save.get("tmd_teams") or []):
-        add(t["team"], t["players"], "save")
+    docs = []
     for path in sorted(glob.glob(os.path.join(db_dir, "*.json"))):
         try:
             with open(path, encoding="utf-8") as f:
                 doc = json.load(f)
         except (OSError, ValueError):
             continue
-        if doc.get("type") != "team":
-            continue
+        if doc.get("type") == "team":
+            docs.append(doc)
+            name = str(doc.get("country_name", "")).replace("_", " ").title()
+            COUNTRY_NAMES[doc.get("country")] = name
+    for t in (save.get("selected_teams") or []) + (save.get("tmd_teams") or []):
+        add(t["team"], t["players"], "save")
+    for doc in docs:
         for t in doc.get("teams", []):
             add(t["team"], t["players"], "db")
     return players
@@ -204,17 +276,19 @@ def row(p, club=None):
     """One table row: position, rating, each skill, value, status."""
     skills = " ".join(
         f"{'-' if p['position'] == 0 else skill(p, s):>3}" for s in SKILLS)
-    name = p["player_name"].title()
+    name = display_name(p)
     c = f"{club.title()[:18]:<18} " if club is not None else ""
+    tail = f"  {where(club)}" if club is not None else ""
     return (f"{POS[p['position']]:<3}{rating(p):>4}  {name[:22]:<22} {c}"
-            f"{skills}  {money(value_k(p)):>6}  {status(p)}")
+            f"{skills}  {money(value_k(p)):>6}  {status(p):<7}{tail}")
 
 
 def header(with_club):
     """Column header matching row()."""
     c = f"{'Club':<18} " if with_club else ""
+    tail = "  Country" if with_club else ""
     return (f"Pos Rtg  {'Name':<22} {c}{' '.join(SKILL_LABELS)}  "
-            f"{'Value':>6}  Status")
+            f"{'Value':>6}  {'Status':<7}{tail}")
 
 
 def skill_delta(d):
@@ -231,31 +305,137 @@ def option_row(old, new, club, label):
     gain = rating(new) - rating(old)
     net = value_k(new) - value_k(old)
     net_txt = "even" if net == 0 else ("+" if net > 0 else "-") + money(abs(net))
-    name = new["player_name"].title()
+    name = display_name(new)
     return (f"   {gain:>+4d}  {name[:22]:<22} {deltas}  {money(value_k(new)):>6}  "
-            f"Rtg {rating(new)}, net {net_txt}, {club.title()}  [{label}]")
+            f"Rtg {rating(new)}, net {net_txt}, {club.title()} ({where(club)})  [{label}]")
 
 
-def pick_options(better, old, n):
-    """Up to n distinct upgrades: the best rated, the cheapest, the one with the
-    most rating per pound, then the next best rated."""
-    if not better:
-        return []
-    picks = [
-        (better[0], "best"),
-        (min(better, key=lambda m: (value_k(m[2]), -rating(m[2]))), "cheapest"),
-        (max(better, key=lambda m: ((rating(m[2]) - rating(old)) / max(value_k(m[2]), 1),
-                                    rating(m[2]))), "bargain"),
-    ] + [(m, "next") for m in better[1:]]
+def parse_bands(text):
+    """Spending bands as fractions of the budget, from "0,10,25,50,100" (percent)."""
+    try:
+        bands = sorted({float(x) / 100 for x in text.split(",") if x.strip()})
+    except ValueError:
+        sys.exit(f"swos-scout: --bands wants percentages like 0,10,25,50,100, got {text}")
+    return bands or [1.0]
+
+
+def band_label(cap_k):
+    """How a band reads in the output: 'swap' for no money spent, else 'up to X'."""
+    return "swap" if cap_k <= 0 else f"<= {money(int(cap_k))}"
+
+
+def pick_by_band(cands, cost, budget_k, bands, per_band):
+    """The best rated candidates in each spending band, cheapest bands first.
+    `cost` is what a candidate costs you (net of a sale, for an upgrade); a
+    player shown in a cheaper band is not repeated in a dearer one. Bands are
+    fractions of the budget; 0 means spending nothing."""
     out, seen = [], set()
-    for m, label in picks:
-        if id(m[2]) in seen:
-            continue
-        seen.add(id(m[2]))
-        out.append((m, label))
-        if len(out) == n:
-            break
+    for frac in bands:
+        cap = budget_k * frac
+        picks = [m for m in cands if cost(m) <= cap and id(m[2]) not in seen]
+        picks.sort(key=lambda m: (-rating(m[2]), cost(m)))
+        for m in picks[:per_band]:
+            seen.add(id(m[2]))
+            out.append((m, band_label(cap)))
     return out
+
+
+def available(p):
+    """Can play: not sold, injured or out on loan."""
+    return not sold(p) and not p["injury"] and not p["flags"] & PF_LOAN
+
+
+def lineup_report(save, min_gain, max_changes):
+    """Print the starting eleven by slot, then the changes that would put a
+    better suited player in a slot: someone from the bench or the reserves,
+    or two starters swapping slots."""
+    ct = save["career_team"]
+    players, team = ct["players"], ct["team"]
+    nums = team.get("player_numbers") or list(range(len(players)))
+    starters = [players[i] for i in nums[:11]]
+    bench = [players[i] for i in nums[11:16] if i < len(players)]
+    reserves = [p for p in save.get("career_team_reserves") or [] if p.get("player_name")]
+    tactic = team.get("tactics", 0)
+    if 0 <= tactic < len(TACTICS):
+        tname, roles = TACTICS[tactic]
+        roles = [POS.index(r) for r in roles]
+    else:
+        tname = f"your tactic {'ABCDEF'[tactic - 12] if 12 <= tactic < 18 else tactic}"
+        roles = [p["position"] for p in starters]
+
+    def now(p, role):
+        """What a starter gives in his slot now (nothing if he cannot play)."""
+        return rating(p, role) if available(p) else 0
+
+    print(f"LINE-UP ({tname}; Rtg = how he suits the slot he plays in)")
+    print(f"Slot Role  {'Player':<22} Own  Rtg  Status")
+    for i, (p, role) in enumerate(zip(starters, roles)):
+        own = POS[p["position"]]
+        flag = "" if own == POS[role] else "  out of position"
+        if not available(p):
+            flag += "  CANNOT PLAY"
+        print(f"{i + 1:>3}  {POS[role]:<4}  {display_name(p)[:22]:<22} {own:<3} "
+              f"{now(p, role):>4}  {status(p)}{flag}")
+
+    # Improve the eleven one move at a time, best move first: bring in a
+    # bench or reserve player for a starter, or swap two starters' slots.
+    # Each player is used once, so the moves add up to one line-up.
+    xi = list(starters)
+    pool = [(p, "bench") for p in bench] + [(p, "reserves") for p in reserves]
+    pool = [(p, wf) for p, wf in pool if available(p)]
+    moves = []
+    for _ in range(22):
+        best = None
+        for i, role in enumerate(roles):
+            for k, (p, wf) in enumerate(pool):
+                gain = rating(p, role) - now(xi[i], role)
+                if gain >= min_gain and (best is None or gain > best[0]):
+                    best = (gain, "in", i, k)
+        for i in range(1, 11):
+            for j in range(i + 1, 11):
+                a, b, ra, rb = xi[i], xi[j], roles[i], roles[j]
+                if ra == rb or not (available(a) and available(b)):
+                    continue
+                gain = (rating(a, rb) + rating(b, ra)) - (rating(a, ra) + rating(b, rb))
+                if gain >= min_gain and (best is None or gain > best[0]):
+                    best = (gain, "swap", i, j)
+        if best is None or len(moves) >= max_changes:
+            break
+        gain, kind, i, k = best
+        if kind == "in":
+            p, wf = pool.pop(k)
+            out = xi[i]
+            moves.append(f"{gain:>+4d}  slot {i + 1} {POS[roles[i]]}: {display_name(p)} "
+                         f"({wf}, {POS[p['position']]}) in for {display_name(out)} "
+                         f"({now(out, roles[i])} -> {rating(p, roles[i])})")
+            xi[i] = p
+            if available(out):
+                pool.append((out, "dropped"))
+        else:
+            j = k
+            a, b = xi[i], xi[j]
+            moves.append(f"{gain:>+4d}  swap {display_name(a)} to slot {j + 1} {POS[roles[j]]} "
+                         f"({rating(a, roles[i])} -> {rating(a, roles[j])}) and "
+                         f"{display_name(b)} to slot {i + 1} {POS[roles[i]]} "
+                         f"({rating(b, roles[j])} -> {rating(b, roles[i])})")
+            xi[i], xi[j] = b, a
+
+    before = sum(now(p, r) for p, r in zip(starters, roles))
+    after = sum(now(p, r) for p, r in zip(xi, roles))
+    print(f"\nSUGGESTED CHANGES, in order (moves worth {min_gain}+; "
+          f"team total {before} -> {after})")
+    if not moves:
+        print("  none: everyone is in the slot that suits him best")
+        print()
+        return
+    for m in moves:
+        print("  " + m)
+    print(f"\nResulting eleven ({tname}):")
+    for i, (p, role) in enumerate(zip(xi, roles)):
+        mark = "" if p is starters[i] else "  *changed"
+        print(f"{i + 1:>3}  {POS[role]:<4}  {display_name(p)[:22]:<22} "
+              f"{POS[p['position']]:<3} {now(p, role):>4}{mark}")
+    print()
 
 
 def parse_pos(text):
@@ -275,17 +455,27 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
 commands and their options:
-  (none)                       squad, then best buys
+  (none)                       line-up, squad, then best buys
+  lineup                       your eleven by slot (roles from your tactic), then
+                               the best changes: a bench or reserve player who
+                               suits a slot better, or two starters swapping
+      --min-gain N             smallest rating gain worth suggesting (default 5)
+      --changes N              most moves suggested (default 8)
   squad                        your squad with keep/upgrade verdicts; under each
-                               player worth replacing, a few options with the
-                               change in every skill (best, cheapest, bargain)
+                               player worth replacing, the best upgrade in each
+                               spending band, with the change in every skill
       --pos POS                only this position
-      --budget M               money for upgrades, in £M (default: bank balance)
-      --options N              upgrade options per player (default 3)
-  buy                          best buys per position, rated above your best
+      --budget M               money to spend, in £M (default: bank balance)
+      --bands P,P,...          spending bands, % of the budget, net of selling
+                               the player (default 0,10,25,50,100; 0 = a swap
+                               that costs nothing)
+      --options N              upgrades per band (default 1)
+  buy                          best buys per position, rated above your best,
+                               in each spending band
       --pos POS                only this position
-      --budget M               max price in £M (default: bank balance)
-      --top N                  players per position (default 5)
+      --budget M               money to spend, in £M (default: bank balance)
+      --bands P,P,...          spending bands, % of the budget (default 10,25,50,100)
+      --top N                  players per band (default 2)
   team NAME                    any club's full squad (part of the name is enough)
   find                         search every player in the world
       --pos POS                only this position
@@ -305,6 +495,8 @@ skills (0-7): p/pas passing, v/vel velocity (shot power), h/hea heading,
   ignores the extra bit), it only raises the player's price. Shown as 0-7.
 Rtg (0-100): skills weighted for the position, speed and ball control most;
   goalkeepers have no skills, so theirs is their price index.
+Suggested players show their club's country and continent. Sold players
+(the game marks them *ERR* until the transfer completes) show as SOLD.
 Clubs marked * are not in your save: skills and value as the season started.
 
 examples:
@@ -318,9 +510,17 @@ examples:
     for p in (p_squad, p_buy):
         p.add_argument("--pos", help="only this position (GK RB LB D RW LW M A)")
         p.add_argument("--budget", type=float, help="max price in £M (default: your bank balance)")
-    p_squad.add_argument("--options", type=int, default=3,
-                         help="upgrade options per player (default 3)")
-    p_buy.add_argument("--top", type=int, default=5, help="players per position (default 5)")
+    p_squad.add_argument("--options", type=int, default=1,
+                         help="upgrade options per spending band (default 1)")
+    for p in (p_squad, p_buy):
+        p.add_argument("--bands", default="0,10,25,50,100",
+                       help="spending bands, %% of the budget (default 0,10,25,50,100)")
+    p_buy.add_argument("--top", type=int, default=2, help="players per band (default 2)")
+    p_line = sub.add_parser("lineup", help="your eleven by slot and better arrangements")
+    p_line.add_argument("--min-gain", type=int, default=5,
+                        help="smallest rating gain worth suggesting (default 5)")
+    p_line.add_argument("--changes", type=int, default=8,
+                        help="changes listed (default 8)")
     p_team = sub.add_parser("team", help="any club's full squad (name or part of it)")
     p_team.add_argument("name", nargs="+")
     p_find = sub.add_parser("find", help="search every player in the world")
@@ -347,6 +547,7 @@ examples:
     budget = getattr(args, "budget", None)
     budget_k = budget * 1000 if budget is not None else max(balance, 0) / 1000
     only = parse_pos(getattr(args, "pos", None))
+    bands = parse_bands(getattr(args, "bands", "0,10,25,50,100"))
 
     print(f"{team['team_name'].title()} - {os.path.basename(path)} - "
           f"balance £{balance:,} - squad value "
@@ -366,9 +567,13 @@ examples:
              and value_k(m[2]) <= cap_k),
             key=lambda m: (-rating(m[2]), value_k(m[2])))
 
+    if cmd in ("all", "lineup"):
+        lineup_report(save, getattr(args, "min_gain", 5), getattr(args, "changes", 8))
+
     if cmd in ("all", "squad"):
-        print("YOUR SQUAD (by position, best first). Under a player worth "
-              "replacing: options, with the rating gain and the change in each skill.")
+        print(f"YOUR SQUAD (by position, best first). Under a player worth replacing: "
+              f"the best upgrade per spending band (net of selling him; budget "
+              f"{money(int(budget_k))}), with the rating gain and the change in each skill.")
         print(header(False) + "  Verdict")
         for pos in range(8):
             if only is not None and pos != only:
@@ -376,12 +581,17 @@ examples:
             group = sorted((p for p in squad if p["position"] == pos),
                            key=rating, reverse=True)
             for i, p in enumerate(group):
+                if sold(p):
+                    print(f"{row(p)}  sold")
+                    continue
                 # Could you replace him with someone clearly better using
                 # your balance plus his own sale price?
                 better = upgrades(pos, rating(p) + 10, budget_k + value_k(p))
-                options = pick_options(better, p, getattr(args, "options", 3))
+                options = pick_by_band(
+                    better, lambda m, old=p: value_k(m[2]) - value_k(old),
+                    budget_k, bands, getattr(args, "options", 1))
                 if options:
-                    verdict = f"upgrade ({len(better)} options)"
+                    verdict = f"upgrade ({len(better)} candidates)"
                 elif i >= 2 and pos != 0:
                     verdict = "depth"
                 else:
@@ -394,19 +604,22 @@ examples:
     if cmd in ("all", "buy"):
         print(f"BEST BUYS within {money(int(budget_k))} "
               f"(rated above your best at the position)")
-        top = getattr(args, "top", 5)
+        top = getattr(args, "top", 2)
         for pos in range(8):
             if only is not None and pos != only:
                 continue
-            mine = max((rating(p) for p in squad if p["position"] == pos), default=0)
-            best = upgrades(pos, mine, budget_k)[:top]
+            mine = max((rating(p) for p in squad
+                        if p["position"] == pos and not sold(p)), default=0)
+            best = pick_by_band(upgrades(pos, mine, budget_k),
+                                lambda m: value_k(m[2]), budget_k,
+                                [b for b in bands if b > 0], top)
             print(f"\n{POS_LONG[POS[pos]]} (your best: {mine})")
             if not best:
                 print("  nobody better within budget")
                 continue
-            print("  " + header(True))
-            for club, src, p in best:
-                print("  " + row(p, club) + ("" if src == "save" else "  *"))
+            print("  " + header(True) + "  Band")
+            for (club, src, p), label in best:
+                print("  " + row(p, club) + f"  [{label}]" + ("" if src == "save" else "  *"))
         print(note)
 
     if cmd == "team":
