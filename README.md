@@ -11,14 +11,23 @@ It never writes to your save. It is for looking, not cheating.
 
 - **Your squad** by position: a 0–100 rating, each skill (0–7), the market value
   the game shows, status (form, injury, cards, trialist/reserve), and a verdict.
-  The verdict is *keep*, *depth*, or *upgrade* (the best clearly better player your
-  balance plus his sale price would buy).
+  The verdict is *keep*, *depth*, or *upgrade*. Under a player worth replacing come a
+  few options: the best rated, the cheapest, and the most rating per pound. These are
+  players at least 10 points better that your balance plus his sale price would buy.
+  Each option shows the change in every skill, the rating gain, and the net cost.
 - **Best buys** per position, rated above your current best and within budget.
 - **Any club's squad**, with each skill averaged over its outfield players.
-- **A search** over every player in the world, by position, minimum skills, price
+- **A search** over every club player in the world, by position, minimum skills, price
   and name, sorted by rating, value or any one skill.
 
 ```
+$ swos-scout squad --pos LB
+Pos Rtg  Name                   Pas Vel Hea Tck Ctl Spd Fin   Value  Status  Verdict
+LB   24  Karol Knap               1   1   1   3   1   2   1    130K    upgrade (163 options)
+    +24  Vitaliy Roman           -1  -1  +1   0  +2  +4   0    250K  Rtg 48, net +120K, Rukh Lviv  [best]  *
+    +11  Facundo Silvera         +2  -1  -1  -3  +2  +2  -1    130K  Rtg 35, net even, Montevideo City  [cheapest]  *
+    +23  Petar Bockaj            +2  -1  -1  +1  +1  +3  -1    200K  Rtg 47, net +70K, Varazdin  [bargain]  *
+
 $ swos-scout find --pos A --min s=6 c=6 --max-price 1
 Pos Rtg  Name                   Club               Pas Vel Hea Tck Ctl Spd Fin   Value  Status
 A    75  Nicolas Fernandez      Belgrano             3   5   0   2   6   6   6      1M    *
@@ -30,7 +39,7 @@ A    70  Antony                 Portland Timbers     4   3   2   2   7   6   3  
 
 ```
 swos-scout                       squad, then best buys
-swos-scout squad [--pos POS] [--budget M]
+swos-scout squad [--pos POS] [--budget M] [--options N]
 swos-scout buy   [--pos POS] [--budget M] [--top N]
 swos-scout team NAME
 swos-scout find  [--pos POS] [--min SKILL=N ...] [--max-price M] [--name TEXT]
@@ -53,7 +62,10 @@ report names the file. Save your career in the game before running it again.
   game's own position-value formula sets prices and barely counts finishing for
   attackers. Goalkeepers have no skills in SWOS, so their rating is their price
   index.
-- **Skills** are the 0–7 values the match engine uses.
+- **Skills** are the 0–7 values the match engine uses. The save stores 0–15, but
+  8–15 is the same skill as 0–7: the engine ignores the extra bit, which only raises
+  the player's price.
+- National sides and custom teams are never offered as buys. `team` still shows them.
 - **Value** is the price the game displays, worked out from OpenSWOS's own value
   tables and form adjustment. It is not the asking price; clubs usually want more.
 - Clubs in your save (your league and the European competitions) show current

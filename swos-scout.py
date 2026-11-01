@@ -93,6 +93,9 @@ FORM_DIVISOR = [
 FORM_TRIALIST = -101   # 0x9B as a signed byte
 FORM_RESERVE = -102    # 0x9A
 PF_INFORM, PF_LOAN = 0x01, 0x02
+# Country numbers of the national sides (the continent files: Europe 80 to
+# Oceania 85) and of the custom teams (72). Nobody can be bought from them.
+NOT_BUYABLE = {72, 80, 81, 82, 83, 84, 85}
 
 
 def skill(p, name):
@@ -166,6 +169,8 @@ def world_players(save, db_dir, own_gtn):
         if gtn == own_gtn or gtn in seen_teams or name in seen_teams:
             return
         seen_teams.update((gtn, name))
+        if team.get("country_number") in NOT_BUYABLE:
+            source = "nat"
         for p in plist:
             if p.get("player_name"):
                 players.append((team["team_name"], source, p))
@@ -212,6 +217,47 @@ def header(with_club):
             f"{'Value':>6}  Status")
 
 
+def skill_delta(d):
+    """A skill change for an option row: +2, -1, or 0."""
+    return f"{d:+d}" if d else "0"
+
+
+def option_row(old, new, club, label):
+    """One upgrade option under a squad player: the rating gain, the change in
+    each skill, the price, and what it costs net of selling the old player."""
+    gk = old["position"] == 0
+    deltas = " ".join(
+        f"{'-' if gk else skill_delta(skill(new, s) - skill(old, s)):>3}" for s in SKILLS)
+    gain = rating(new) - rating(old)
+    net = value_k(new) - value_k(old)
+    net_txt = "even" if net == 0 else ("+" if net > 0 else "-") + money(abs(net))
+    name = new["player_name"].title()
+    return (f"   {gain:>+4d}  {name[:22]:<22} {deltas}  {money(value_k(new)):>6}  "
+            f"Rtg {rating(new)}, net {net_txt}, {club.title()}  [{label}]")
+
+
+def pick_options(better, old, n):
+    """Up to n distinct upgrades: the best rated, the cheapest, the one with the
+    most rating per pound, then the next best rated."""
+    if not better:
+        return []
+    picks = [
+        (better[0], "best"),
+        (min(better, key=lambda m: (value_k(m[2]), -rating(m[2]))), "cheapest"),
+        (max(better, key=lambda m: ((rating(m[2]) - rating(old)) / max(value_k(m[2]), 1),
+                                    rating(m[2]))), "bargain"),
+    ] + [(m, "next") for m in better[1:]]
+    out, seen = [], set()
+    for m, label in picks:
+        if id(m[2]) in seen:
+            continue
+        seen.add(id(m[2]))
+        out.append((m, label))
+        if len(out) == n:
+            break
+    return out
+
+
 def parse_pos(text):
     """Position code (GK RB LB D RW LW M A) to its number."""
     if text is None:
@@ -230,9 +276,12 @@ def main():
         epilog="""\
 commands and their options:
   (none)                       squad, then best buys
-  squad                        your squad with keep/upgrade verdicts
+  squad                        your squad with keep/upgrade verdicts; under each
+                               player worth replacing, a few options with the
+                               change in every skill (best, cheapest, bargain)
       --pos POS                only this position
       --budget M               money for upgrades, in £M (default: bank balance)
+      --options N              upgrade options per player (default 3)
   buy                          best buys per position, rated above your best
       --pos POS                only this position
       --budget M               max price in £M (default: bank balance)
@@ -251,7 +300,9 @@ Without it, the newest ~/.swos/save/*.CAR is read (named on the first line).
 
 positions: GK RB LB D RW LW M A
 skills (0-7): p/pas passing, v/vel velocity (shot power), h/hea heading,
-  t/tck tackling, c/ctl ball control, s/spd speed, f/fin finishing
+  t/tck tackling, c/ctl ball control, s/spd speed, f/fin finishing.
+  The save stores 0-15: 8-15 are the same skill as 0-7 (the match engine
+  ignores the extra bit), it only raises the player's price. Shown as 0-7.
 Rtg (0-100): skills weighted for the position, speed and ball control most;
   goalkeepers have no skills, so theirs is their price index.
 Clubs marked * are not in your save: skills and value as the season started.
@@ -267,6 +318,8 @@ examples:
     for p in (p_squad, p_buy):
         p.add_argument("--pos", help="only this position (GK RB LB D RW LW M A)")
         p.add_argument("--budget", type=float, help="max price in £M (default: your bank balance)")
+    p_squad.add_argument("--options", type=int, default=3,
+                         help="upgrade options per player (default 3)")
     p_buy.add_argument("--top", type=int, default=5, help="players per position (default 5)")
     p_team = sub.add_parser("team", help="any club's full squad (name or part of it)")
     p_team.add_argument("name", nargs="+")
@@ -309,12 +362,13 @@ examples:
         """World players at `pos` rated above `floor` and valued <= cap_k."""
         return sorted(
             (m for m in world
-             if m[2]["position"] == pos and rating(m[2]) > floor
+             if m[1] != "nat" and m[2]["position"] == pos and rating(m[2]) > floor
              and value_k(m[2]) <= cap_k),
             key=lambda m: (-rating(m[2]), value_k(m[2])))
 
     if cmd in ("all", "squad"):
-        print("YOUR SQUAD (by position, best first)")
+        print("YOUR SQUAD (by position, best first). Under a player worth "
+              "replacing: options, with the rating gain and the change in each skill.")
         print(header(False) + "  Verdict")
         for pos in range(8):
             if only is not None and pos != only:
@@ -322,17 +376,19 @@ examples:
             group = sorted((p for p in squad if p["position"] == pos),
                            key=rating, reverse=True)
             for i, p in enumerate(group):
-                verdict = "keep"
                 # Could you replace him with someone clearly better using
                 # your balance plus his own sale price?
                 better = upgrades(pos, rating(p) + 10, budget_k + value_k(p))
-                if better:
-                    club, _, b = better[0]
-                    verdict = (f"upgrade: {b['player_name'].title()} of "
-                               f"{club.title()} ({rating(b)}, {money(value_k(b))})")
+                options = pick_options(better, p, getattr(args, "options", 3))
+                if options:
+                    verdict = f"upgrade ({len(better)} options)"
                 elif i >= 2 and pos != 0:
                     verdict = "depth"
+                else:
+                    verdict = "keep"
                 print(f"{row(p)}  {verdict}")
+                for (club, src, b), label in options:
+                    print(option_row(p, b, club, label) + ("" if src == "save" else "  *"))
         print()
 
     if cmd in ("all", "buy"):
@@ -370,7 +426,8 @@ examples:
         club = hits[0]
         src, players = clubs[club]
         players = sorted(players, key=lambda p: (p["position"], -rating(p)))
-        print(f"{club.title()}{'' if src == 'save' else '  *'}")
+        print(f"{club.title()}{'' if src == 'save' else '  *'}"
+              + ("  (national/custom side: nobody can be bought)" if src == "nat" else ""))
         print(header(False))
         for p in players:
             print(row(p))
@@ -393,7 +450,8 @@ examples:
         name = args.name.upper() if args.name else None
         hits = [
             (club, src, p) for club, src, p in world
-            if (only is None or p["position"] == only)
+            if src != "nat"
+            and (only is None or p["position"] == only)
             and (cap_k is None or value_k(p) <= cap_k)
             and (name is None or name in p["player_name"].upper())
             and all(p["position"] and skill(p, s) >= n for s, n in mins)
