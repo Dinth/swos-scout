@@ -26,12 +26,14 @@ It never writes to your save. It is for looking, not cheating.
   and name, sorted by rating, value or any one skill.
 
 ```
-$ swos-scout squad --pos LB
-Pos Rtg  Name                   Pas Vel Hea Tck Ctl Spd Fin   Value  Status  Verdict
-LB   24  Karol Knap               1   1   1   3   1   2   1    130K    upgrade (163 options)
-    +24  Vitaliy Roman           -1  -1  +1   0  +2  +4   0    250K  Rtg 48, net +120K, Rukh Lviv  [best]  *
-    +11  Facundo Silvera         +2  -1  -1  -3  +2  +2  -1    130K  Rtg 35, net even, Montevideo City  [cheapest]  *
-    +23  Petar Bockaj            +2  -1  -1  +1  +1  +3  -1    200K  Rtg 47, net +70K, Varazdin  [bargain]  *
+$ swos-scout squad --pos RB
+Pos Rtg  Name                   Pas Vel Hea Tck Ctl Spd Fin   Value  Status   Verdict
+RB   30  Oskar Wojcik             1   1   4   5   1   1   1    200K           upgrade (405 candidates)
+    +13  Erick Canales           +1   0  -3  -2  +1  +4  -1    200K  Rtg 43, net even, Dep. Garcilaso (Peru, S. America)  [swap]  *
+    +19  Yomar Rocha             +1   0  -3   0  +1  +4  -1    300K  Rtg 49, net +100K, Bolivar (Bolivia, S. America)  [<= 113K]  *
+    +25  Matheus Silva            0  -1  -1  -2  +4  +4  -1    350K  Rtg 55, net +150K, Qarabag (Russia, Europe)  [<= 284K]  *
+    +36  Emanuel Coronel         +3  +2  -3  -1  +4  +5   0    750K  Rtg 66, net +550K, Rosario Central (Argentina, S. America)  [<= 569K]  *
+    +47  Agustin Giay            +3  +3  -2  +2  +3  +6  +1    1.3M  Rtg 77, net +1.1M, Palmeiras (Brazil, S. America)  [<= 1.14M]  *
 
 $ swos-scout find --pos A --min s=6 c=6 --max-price 1
 Pos Rtg  Name                   Club               Pas Vel Hea Tck Ctl Spd Fin   Value  Status
@@ -63,8 +65,9 @@ report names the file. Save your career in the game before running it again.
 ## How the numbers are worked out
 
 - **Rating** is the player's skills weighted for his position. Speed and ball
-  control weigh most for every outfield player, and the rest separate players who
-  are otherwise level. The weights are a judgement call, not a game table: the
+  control weigh most for every outfield player (4). The other skills count by
+  position: tackling, then passing and heading at the back; passing, then tackling in
+  midfield; passing on the wings; finishing, then shot power up front (1–3). The weights are a judgement call, not a game table: the
   game's own position-value formula sets prices and barely counts finishing for
   attackers. Goalkeepers have no skills in SWOS, so their rating is their price
   index.
