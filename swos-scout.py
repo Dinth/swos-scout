@@ -36,6 +36,7 @@ import glob
 import json
 import os
 import sys
+import time
 
 POS = ["GK", "RB", "LB", "D", "RW", "LW", "M", "A"]
 POS_LONG = {
@@ -149,6 +150,38 @@ def rating(p, pos=None):
         return round(min(p["price"], 49) / 49 * 100) if pos == p["position"] else 0
     w = WEIGHTS[pos]
     return round(sum(w[s] * skill(p, s) for s in SKILLS) / (7 * sum(w.values())) * 100)
+
+
+# Playing out of position costs a player: the game values him by the pitch
+# areas his own position covers, which a different slot does not use. These
+# cuts are an estimate, not a game table: same line other side (RB/LB,
+# RW/LW) -10%, a neighbouring role -25%, anything further -50%.
+NEIGHBOURS = {
+    (1, 2), (4, 5),                      # other side of the same line
+}
+CLOSE = {
+    (1, 3), (2, 3),                      # full back <-> centre back
+    (1, 4), (2, 5),                      # full back <-> winger, same side
+    (4, 6), (5, 6), (4, 7), (5, 7),      # winger <-> midfield / attack
+    (6, 7), (3, 6),                      # midfield <-> attack / centre back
+}
+
+
+def position_factor(own, role):
+    """How much of his rating a player keeps in a slot of role `role`."""
+    if own == role:
+        return 1.0
+    pair = (min(own, role), max(own, role))
+    if pair in NEIGHBOURS:
+        return 0.9
+    if pair in CLOSE:
+        return 0.75
+    return 0.5
+
+
+def fit(p, role):
+    """Rating in a line-up slot, with the out-of-position cut."""
+    return round(rating(p, role) * position_factor(p["position"], role))
 
 
 def sold(p):
@@ -365,9 +398,10 @@ def lineup_report(save, min_gain, max_changes):
 
     def now(p, role):
         """What a starter gives in his slot now (nothing if he cannot play)."""
-        return rating(p, role) if available(p) else 0
+        return fit(p, role) if available(p) else 0
 
-    print(f"LINE-UP ({tname}; Rtg = how he suits the slot he plays in)")
+    print(f"LINE-UP ({tname}; Rtg = how he suits the slot he plays in, "
+          f"less the out-of-position cut)")
     print(f"Slot Role  {'Player':<22} Own  Rtg  Status")
     for i, (p, role) in enumerate(zip(starters, roles)):
         own = POS[p["position"]]
@@ -388,7 +422,7 @@ def lineup_report(save, min_gain, max_changes):
         best = None
         for i, role in enumerate(roles):
             for k, (p, wf) in enumerate(pool):
-                gain = rating(p, role) - now(xi[i], role)
+                gain = fit(p, role) - now(xi[i], role)
                 if gain >= min_gain and (best is None or gain > best[0]):
                     best = (gain, "in", i, k)
         for i in range(1, 11):
@@ -396,7 +430,7 @@ def lineup_report(save, min_gain, max_changes):
                 a, b, ra, rb = xi[i], xi[j], roles[i], roles[j]
                 if ra == rb or not (available(a) and available(b)):
                     continue
-                gain = (rating(a, rb) + rating(b, ra)) - (rating(a, ra) + rating(b, rb))
+                gain = (fit(a, rb) + fit(b, ra)) - (fit(a, ra) + fit(b, rb))
                 if gain >= min_gain and (best is None or gain > best[0]):
                     best = (gain, "swap", i, j)
         if best is None or len(moves) >= max_changes:
@@ -407,7 +441,7 @@ def lineup_report(save, min_gain, max_changes):
             out = xi[i]
             moves.append(f"{gain:>+4d}  slot {i + 1} {POS[roles[i]]}: {display_name(p)} "
                          f"({wf}, {POS[p['position']]}) in for {display_name(out)} "
-                         f"({now(out, roles[i])} -> {rating(p, roles[i])})")
+                         f"({now(out, roles[i])} -> {fit(p, roles[i])})")
             xi[i] = p
             if available(out):
                 pool.append((out, "dropped"))
@@ -415,9 +449,9 @@ def lineup_report(save, min_gain, max_changes):
             j = k
             a, b = xi[i], xi[j]
             moves.append(f"{gain:>+4d}  swap {display_name(a)} to slot {j + 1} {POS[roles[j]]} "
-                         f"({rating(a, roles[i])} -> {rating(a, roles[j])}) and "
+                         f"({fit(a, roles[i])} -> {fit(a, roles[j])}) and "
                          f"{display_name(b)} to slot {i + 1} {POS[roles[i]]} "
-                         f"({rating(b, roles[j])} -> {rating(b, roles[i])})")
+                         f"({fit(b, roles[j])} -> {fit(b, roles[i])})")
             xi[i], xi[j] = b, a
 
     before = sum(now(p, r) for p, r in zip(starters, roles))
@@ -461,6 +495,8 @@ commands and their options:
                                suits a slot better, or two starters swapping
       --min-gain N             smallest rating gain worth suggesting (default 5)
       --changes N              most moves suggested (default 8)
+                               Out of position a player keeps 90% (other side,
+                               same line), 75% (neighbouring role) or 50%.
   squad                        your squad with keep/upgrade verdicts; under each
                                player worth replacing, the best upgrade in each
                                spending band, with the change in every skill
@@ -549,7 +585,9 @@ examples:
     only = parse_pos(getattr(args, "pos", None))
     bands = parse_bands(getattr(args, "bands", "0,10,25,50,100"))
 
-    print(f"{team['team_name'].title()} - {os.path.basename(path)} - "
+    saved = time.strftime("%d %b %H:%M", time.localtime(os.path.getmtime(path)))
+    print(f"{team['team_name'].title()} - {os.path.basename(path)} saved {saved} "
+          f"(changes made in the game since then are not in it) - "
           f"balance £{balance:,} - squad value "
           f"{money(sum(value_k(p) for p in squad))}")
     print("Rtg: 0-100, speed and ball control weigh most (GK: price index). "

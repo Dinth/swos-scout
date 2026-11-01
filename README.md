@@ -60,7 +60,8 @@ Positions: `GK RB LB D RW LW M A`. Skills: `p` passing, `v` velocity (shot power
 `h` heading, `t` tackling, `c` ball control, `s` speed, `f` finishing.
 
 Without `--save`, the newest `~/.swos/save/*.CAR` is read. The first line of the
-report names the file. Save your career in the game before running it again.
+report names the file and when it was saved. The script only sees what is in that
+file, so save your career in the game before running it again.
 
 ## How the numbers are worked out
 
@@ -74,6 +75,10 @@ report names the file. Save your career in the game before running it again.
 - **Skills** are the 0–7 values the match engine uses. The save stores 0–15, but
   8–15 is the same skill as 0–7: the engine ignores the extra bit, which only raises
   the player's price.
+- **Out of position** a player keeps 90% of his rating on the other side of the same
+  line (RB/LB, RW/LW), 75% in a neighbouring role and 50% anywhere else. The game
+  values a player by the pitch areas his own position covers, so he loses value in a
+  different slot; these percentages are an estimate of that, not a game table.
 - **Line-up roles** come from your tactic: each slot's average place on the pitch in
   OpenSWOS's tactic data. For your own tactics (A–F), the starters' own positions are
   used.
