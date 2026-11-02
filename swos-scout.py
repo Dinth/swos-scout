@@ -189,6 +189,19 @@ def sold(p):
     return p["player_name"].startswith(SOLD_PREFIX)
 
 
+def injured(p):
+    """Out injured, as the game decides it (isPlayerDisabled in OpenSWOS's
+    career_status.c): the status bucket (cardsInjuries bits 5-7) at 2 or
+    more, or the injury bits (2-4) at 2 or more. 1 in either is a knock he
+    plays through."""
+    return p.get("status_bucket", 0) >= 2 or p["injury"] >= 2
+
+
+def suspended(p):
+    """Banned for cards (cardsInjuries bits 0-1)."""
+    return p["cards"] != 0
+
+
 def display_name(p):
     """Player name for display, without the sold marker."""
     return p["player_name"].removeprefix(SOLD_PREFIX).strip().title()
@@ -242,10 +255,10 @@ def status(p):
         out.append(f"form{p['form']:+d}")
     if p["flags"] & PF_LOAN:
         out.append("LOAN")
-    if p["injury"]:
-        out.append(f"INJ{p['injury']}")
-    if p["cards"]:
-        out.append(f"cards{p['cards']}")
+    if injured(p):
+        out.append("INJURED")
+    if suspended(p):
+        out.append("BANNED")
     return " ".join(out)
 
 
@@ -374,8 +387,8 @@ def pick_by_band(cands, cost, budget_k, bands, per_band):
 
 
 def available(p):
-    """Can play: not sold, injured or out on loan."""
-    return not sold(p) and not p["injury"] and not p["flags"] & PF_LOAN
+    """Can play: not sold, injured, banned or out on loan."""
+    return not (sold(p) or injured(p) or suspended(p) or p["flags"] & PF_LOAN)
 
 
 def lineup_report(save, min_gain, max_changes):
