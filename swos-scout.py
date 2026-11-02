@@ -202,6 +202,25 @@ def suspended(p):
     return p["cards"] != 0
 
 
+def career_squad(save):
+    """Your players in the game's own order (career_scalars'
+    current_match_players, the list the game picks a match from): the eleven,
+    the five substitutes, then everyone else. Indexes 16 and up are the
+    reserves' records. The squad record's own player_numbers is stale and still
+    holds players you have sold, so it is only the fallback."""
+    ct = save["career_team"]
+    records = ct["players"] + (save.get("career_team_reserves") or [])
+    cs = save.get("career_scalars") or {}
+    order = cs.get("current_match_players")
+    if order and cs.get("career_num_players"):
+        order = order[:cs["career_num_players"]]
+    else:
+        order = (ct["team"].get("player_numbers") or list(range(len(ct["players"]))))
+        order = list(order) + list(range(len(ct["players"]), len(records)))
+    return [records[i] for i in order
+            if i < len(records) and records[i].get("player_name")]
+
+
 def display_name(p):
     """Player name for display, without the sold marker."""
     return p["player_name"].removeprefix(SOLD_PREFIX).strip().title()
@@ -396,11 +415,9 @@ def lineup_report(save, min_gain, max_changes):
     better suited player in a slot: someone from the bench or the reserves,
     or two starters swapping slots."""
     ct = save["career_team"]
-    players, team = ct["players"], ct["team"]
-    nums = team.get("player_numbers") or list(range(len(players)))
-    starters = [players[i] for i in nums[:11]]
-    bench = [players[i] for i in nums[11:16] if i < len(players)]
-    reserves = [p for p in save.get("career_team_reserves") or [] if p.get("player_name")]
+    team = ct["team"]
+    squad = career_squad(save)
+    starters, bench, reserves = squad[:11], squad[11:16], squad[16:]
     tactic = team.get("tactics", 0)
     if 0 <= tactic < len(TACTICS):
         tname, roles = TACTICS[tactic]
@@ -590,8 +607,7 @@ examples:
         save = json.load(f)
 
     team = save["career_team"]["team"]
-    squad = save["career_team"]["players"] + (save.get("career_team_reserves") or [])
-    squad = [p for p in squad if p.get("player_name")]
+    squad = career_squad(save)
     balance = save["career_scalars"].get("new_balance", 0)
     budget = getattr(args, "budget", None)
     budget_k = budget * 1000 if budget is not None else max(balance, 0) / 1000
